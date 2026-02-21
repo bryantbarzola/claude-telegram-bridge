@@ -1,0 +1,26 @@
+[Unit]
+Description=Claude Telegram Bridge Bot
+After=network.target
+
+[Service]
+Type=simple
+User=administrator
+Group=administrator
+WorkingDirectory=/home/administrator/claude-telegram-bridge
+Environment="PATH=/home/administrator/.local/bin:/home/administrator/.nvm/versions/node/v20.19.5/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/administrator/claude-telegram-bridge/venv/bin/python /home/administrator/claude-telegram-bridge/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/administrator/claude-telegram-bridge
+ReadWritePaths=/home/administrator/.claude
+
+[Install]
+WantedBy=multi-user.target

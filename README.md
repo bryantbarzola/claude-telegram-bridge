@@ -33,19 +33,50 @@ TELEGRAM_BOT_TOKEN=your-bot-token
 TELEGRAM_USER_ID=your-numeric-user-id
 ```
 
-### 4. Install Dependencies
+### 4. Run
 
 ```bash
-pip3 install -r requirements.txt
+./start.sh
 ```
 
-Requires Python 3.9+.
+This will automatically:
+1. Create a Python virtual environment (if not present)
+2. Install all dependencies
+3. Start the bot in the background
+4. Save the process ID for management
 
-### 5. Run
+**Stop the bot:**
 
 ```bash
-python3 bot.py
+./stop.sh
 ```
+
+**View logs:**
+
+```bash
+tail -f logs/bot.log
+```
+
+### 5. Running as a Systemd Service (Optional)
+
+For automatic startup on boot and crash recovery:
+
+```bash
+# Install the service (one-time)
+sudo cp claude-telegram-bridge.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable claude-telegram-bridge.service
+
+# Start / stop / restart
+sudo systemctl start claude-telegram-bridge
+sudo systemctl stop claude-telegram-bridge
+sudo systemctl restart claude-telegram-bridge
+
+# View logs
+sudo journalctl -u claude-telegram-bridge -f
+```
+
+**Note:** When using systemd, do not use start.sh/stop.sh simultaneously. Choose one management method.
 
 ## Commands
 
@@ -53,6 +84,7 @@ python3 bot.py
 |---|---|
 | `/start` | Welcome message with available commands |
 | `/sessions` | List recent sessions as tappable buttons |
+| `/new` | Start a brand new Claude Code session |
 | `/disconnect` | Disconnect from current session |
 | `/status` | Show connection status and permission mode |
 | `/safe` | Toggle permission mode (skip-permissions / safe) |

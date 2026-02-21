@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -14,7 +15,7 @@ from telegram.ext import (
 )
 
 from auth import authorized
-from claude_cli import send_message
+from claude_cli import send_message, send_new_message
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_MAX_MESSAGE_LENGTH
 from sessions import get_session_by_id, list_recent_sessions
 
@@ -31,6 +32,7 @@ class BotState:
     session_cwd: str | None = None
     session_label: str = ""
     skip_permissions: bool = True
+    pending_new_session: bool = False
 
 
 state = BotState()
@@ -69,6 +71,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Claude Code Bridge\n\n"
         "Commands:\n"
         "/sessions - List recent sessions\n"
+        "/new - Start a new session\n"
         "/disconnect - Disconnect from session\n"
         "/status - Show connection status\n"
         "/safe - Toggle permission mode\n\n"
@@ -115,6 +118,7 @@ async def session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     state.session_id = session.session_id
     state.session_cwd = session.cwd
     state.session_label = session.display or session.session_id[:12]
+    state.pending_new_session = False
 
     mode = "skip-permissions" if state.skip_permissions else "safe"
     await query.edit_message_text(
@@ -128,20 +132,26 @@ async def session_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 @authorized
 async def disconnect_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if state.session_id is None:
+    if state.session_id is None and not state.pending_new_session:
         await update.message.reply_text("Not connected to any session.")
         return
 
     label = state.session_label
+    was_pending = state.pending_new_session
     state.session_id = None
     state.session_cwd = None
     state.session_label = ""
-    await update.message.reply_text(f"Disconnected from: {label}")
+    state.pending_new_session = False
+    await update.message.reply_text(
+        "Cancelled new session." if was_pending else f"Disconnected from: {label}"
+    )
 
 
 @authorized
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if state.session_id is None:
+    if state.pending_new_session:
+        connected = f"New session (pending first message)\nWorking dir: {state.session_cwd}"
+    elif state.session_id is None:
         connected = "Not connected"
     else:
         connected = f"Connected to: {state.session_label}\nSession ID: {state.session_id}\nWorking dir: {state.session_cwd}"
@@ -169,9 +179,56 @@ async def safe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 @authorized
+async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start a brand new Claude Code session."""
+    state.session_id = None
+    state.session_cwd = str(Path.home())
+    state.session_label = ""
+    state.pending_new_session = True
+
+    mode = "skip-permissions" if state.skip_permissions else "safe"
+    await update.message.reply_text(
+        "Starting new session.\n"
+        f"Working dir: {state.session_cwd}\n"
+        f"Mode: {mode}\n\n"
+        "Send your first message to begin."
+    )
+
+
+@authorized
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if state.pending_new_session:
+        user_text = update.message.text
+        if not user_text:
+            return
+
+        thinking_msg = await update.message.reply_text("Starting new session...")
+
+        response, session_id = await send_new_message(
+            message=user_text,
+            cwd=state.session_cwd or str(Path.home()),
+            skip_permissions=state.skip_permissions,
+        )
+
+        if session_id is None:
+            await thinking_msg.edit_text(
+                f"Failed to start session:\n\n{response}\n\n"
+                "Send another message to retry, or /disconnect to cancel."
+            )
+            return
+
+        state.session_id = session_id
+        state.session_label = f"new-{session_id[:8]}"
+        state.pending_new_session = False
+
+        chunks = split_message(response)
+        await thinking_msg.edit_text(chunks[0])
+        for chunk in chunks[1:]:
+            await update.message.reply_text(chunk)
+        return
+
     if state.session_id is None:
-        await update.message.reply_text("Not connected. Use /sessions to pick a session.")
+        await update.message.reply_text("Not connected. Use /sessions to pick a session or /new to start one.")
         return
 
     user_text = update.message.text
@@ -205,6 +262,7 @@ def main() -> None:
     app.add_handler(CommandHandler("disconnect", disconnect_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("safe", safe_command))
+    app.add_handler(CommandHandler("new", new_command))
     app.add_handler(CallbackQueryHandler(session_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
